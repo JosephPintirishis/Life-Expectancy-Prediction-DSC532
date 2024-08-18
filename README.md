@@ -2,7 +2,7 @@
 
 ## Overview
 
-This project was developed as part of the DSC 532 – Statistical Learning course in the Master’s program at University of Cyprus. The objective was to predict life expectancy at birth using various statistical and machine learning models implemented in R. The project explores a wide array of factors, from health indicators to economic and social variables, impacting life expectancy across 179 countries from 2000 to 2015. The goal was to uncover critical influences on life expectancy and offer actionable insights for policymakers to enhance longevity.
+This project was developed as part of the DSC 532 – Statistical Learning course in the Master’s program of Data Science at University of Cyprus. The objective was to predict life expectancy at birth using various statistical and machine learning models implemented in R. The project explores a wide array of factors, from health indicators to economic and social variables, impacting life expectancy across 179 countries from 2000 to 2015. The goal was to uncover critical influences on life expectancy and offer actionable insights for policymakers to enhance longevity.
 
 ## Project Structure
 
