@@ -28,7 +28,7 @@ This project was developed as part of the DSC 532 – Statistical Learning cours
 
 ## Dependencies
 
-- R version 4.x or higher
+- R version 4.3.3 or higher
 - `ggplot2`
 - `dplyr`
 - `MASS`
