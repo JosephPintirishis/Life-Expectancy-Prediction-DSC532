@@ -1,0 +1,1246 @@
+---
+title: "Life Expectancy (Regression Problem)"
+date: "07-04-2024"
+output: html_document
+---
+
+## Introduction
+
+ Team Members:
+
+ Andreas Papadopoulos
+ 
+ Constantinos Constantinou
+ 
+ Foivos Lympouras
+ 
+ Iosif Pintirishis
+ 
+ This research will delve into various determinants of life expectancy, including immunization rates, mortality statistics, economic indicators, social considerations, and additional health-related metrics. Given that the data contains a diverse range of countries, it will facilitate the identification of key factors that negatively affect life expectancy. Consequently, this analysis will enable countries to pinpoint specific areas requiring attention and intervention, in order to provide a roadmap for effectively improving the longevity of their citizens.
+We will be using data from a period of 2000 to 2015 for 179 countries.
+Our aim is to predict the life expectancy at birth (response) using the other variables as predictors. 
+
+
+## Load packages 
+ Load the necessary packages that will be used later.
+```{r}
+rm(list = ls())
+
+list.of.packages <- c("ggplot2", "dplyr", "MASS", "DescTools", "nortest", "moments", "reshape2",
+"mice", "leaps", "corrplot", "GGally", "glmnet", "randomForest", "boot")
+new.packages <- list.of.packages[!(list.of.packages %in% installed.packages()[, "Package"])]
+# Install them in case they are not already
+if (length(new.packages)) install.packages(new.packages)
+# Load packages
+invisible(lapply(list.of.packages, library, character.only = TRUE))
+```
+
+## Functions 
+
+```{r}
+change_data <- function(data, name_the_var){
+  # Function to get the columns we need from some files which they have the same structure
+  data <- dplyr::select(data, Location, Period, Value)
+  names(data)[names(data) == "Location"] <- "Country"
+  names(data)[names(data) == "Period"] <- "Year"
+  names(data)[names(data) == "Value"] <- name_the_var
+  return(data)
+}
+
+change_country_names <- function(data) {
+  # Function in order to have the same Country names in the files that we want to join
+  data %>%
+    mutate(Country = case_when(
+      Country == "Democratic Republic of the Congo" ~ "Congo, Dem. Rep.",
+      Country == "Côte d’Ivoire" ~ "Cote d'Ivoire",
+      Country == "Micronesia (Federated States of)" ~ "Micronesia, Fed. Sts.",
+      Country == "Congo" ~ "Congo, Rep.",
+      Country == "Gambia" ~ "Gambia, The",
+      Country == "Yemen" ~ "Yemen, Rep.",
+      Country == "United Republic of Tanzania" ~ "Tanzania",
+      Country == "Lao People's Democratic Republic" ~ "Lao PDR",
+      Country == "Egypt" ~ "Egypt, Arab Rep.",
+      Country == "Bolivia (Plurinational State of)" ~ "Bolivia",
+      Country == "Democratic People's Republic of Korea" ~ "Korea, Dem. People's Rep.",
+      Country == "Bahamas" ~ "Bahamas, The",
+      Country == "Saint Vincent and the Grenadines" ~ "St. Vincent and the Grenadines",
+      Country == "Republic of Moldova" ~ "Moldova",
+      Country == "Venezuela (Bolivarian Republic of)" ~ "Venezuela, RB",
+      Country == "Kyrgyzstan" ~ "Kyrgyz Republic",
+      Country == "Saint Lucia" ~ "St. Lucia",
+      Country == "The former Yugoslav Republic of Macedonia" ~ "North Macedonia",
+      Country == "Iran (Islamic Republic of)" ~ "Iran, Islamic Rep.",
+      Country == "Slovakia" ~ "Slovak Republic",
+      Country == "United States of America" ~ "United States",
+      Country == "Türkiye" ~ "Turkiye",
+      Country == "United Kingdom of Great Britain and Northern Ireland" ~ "United Kingdom",
+      Country == "Republic of Korea" ~ "Korea, Rep.",
+      TRUE ~ Country
+    ))
+}
+
+predict.regsubsets <- function(object, newdata, id, ...) {
+  # Predict method for regsubsets()
+  form <- as.formula(object$call[[2]])
+  mat <- model.matrix(form, newdata)
+  coefi <- coef(object, id = id)
+  xvars <- names(coefi)
+  mat[, xvars] %*% coefi
+ }
+```
+
+## Import data 
+
+ The data comes from many sources. Our main file is the Life-Expectancy-Data-Update, which is from Kaggle([Life Expectancy dataset](https://www.kaggle.com/datasets/lashagoch/life-expectancy-who-updated/data?fbclid=IwAR15yFIdHSWyhTXbcX38lE2By0BevxK94OjBuzE4EceieQ5Ckp7Iyw4M76c)). There are some features that we decided to replace from the orginal source files in order to avoid any wrong inputs. Thus, the features Adult mortality, Alcohol, Diptheria, HepatitisB, Measles, Polio and Mean_BMI come from The Global Health Observatory (GHO) data repository under World Health Organization (WHO) which keeps track of the health status as well as many other related factors for all countries. The Population and GDP per capita are from databank.worldbank.
+```{r}
+# Import data
+life_data <- read.csv("Life-Expectancy-Data-Updated.csv")
+life_data <- dplyr::select(life_data, Region, Country, Year, Infant_deaths, Under_five_deaths,
+                           Thinness_ten_nineteen_years, Thinness_five_nine_years, Schooling, 
+                           Incidents_HIV,Economy_status_Developed, Economy_status_Developing, 
+                           Life_expectancy)
+
+adult_mort_data <- read.csv("Adult_mortality_inputs.csv")
+adult_mort_data <- subset(adult_mort_data, Dim1 == "Both sexes")
+adult_mort_data <- change_data(adult_mort_data, "Adult_mortality")
+
+alcohol_data <- read.csv("Alcohol_inputs.csv")
+alcohol_data <- subset(alcohol_data, Dim1ValueCode == "ALCOHOLTYPE_SA_TOTAL")
+alcohol_data <- change_data(alcohol_data, "Alcohol")
+
+diphtheria_data <- read.csv("Diphtheria_inputs.csv")
+diphtheria_data <- change_data(diphtheria_data, "Diphtheria")
+
+hepatitisB_data <- read.csv("HepatitisB_inputs.csv")
+hepatitisB_data <- change_data(hepatitisB_data, "HepatitisB")
+
+measles_data <- read.csv("Measles_inputs.csv")
+measles_data <- change_data(measles_data, "Measles")
+
+polio_data <- read.csv("Polio_inputs.csv")
+polio_data <- change_data(polio_data, "Polio")
+
+Mean_BMI_data <- read.csv("Mean_BMI_inputs.csv")
+Mean_BMI_data <- subset(Mean_BMI_data, Dim1 == "Both sexes")
+Mean_BMI_data <- dplyr::select(Mean_BMI_data, Location, Period, FactValueNumeric)
+names(Mean_BMI_data)[names(Mean_BMI_data) == "Location"] <- "Country"
+names(Mean_BMI_data)[names(Mean_BMI_data) == "Period"] <- "Year"
+names(Mean_BMI_data)[names(Mean_BMI_data) == "FactValueNumeric"] <- "Mean_BMI"
+
+Population_data <- read.csv("Population_inputs.csv")
+
+# Melt from reshape2
+Population_data <- melt(Population_data, id.vars = c("Series.Name", "Series.Code","Country.Name", "Country.Code"),
+                        variable.name = "Year", value.name = "Population")
+Population_data <- dplyr::select(Population_data, Country.Name, Year, Population)
+names(Population_data)[names(Population_data) == "Country.Name"] <- "Country"
+
+Population_data$Year <- gsub("X(\\d{4})\\..YR\\d{4}.", "\\1", Population_data$Year)
+Population_data$Year <- as.numeric(Population_data$Year)
+
+GDP_data <- read.csv("GDP_inputs.csv")
+# Melt from reshape2
+GDP_data <- melt(GDP_data, id.vars = c("Series.Name", "Series.Code","Country.Name", "Country.Code"),
+                 variable.name = "Year", value.name = "GDP")
+GDP_data <- dplyr::select(GDP_data, Country.Name, Year, GDP)
+names(GDP_data)[names(GDP_data) == "Country.Name"] <- "Country"
+
+GDP_data$Year <- gsub("X(\\d{4})\\..YR\\d{4}.", "\\1", GDP_data$Year)
+GDP_data$Year <- as.numeric(GDP_data$Year)
+
+
+life_data <- left_join(life_data, adult_mort_data, by = c("Country", "Year"))
+life_data <- left_join(life_data, alcohol_data, by = c("Country", "Year"))
+life_data <- left_join(life_data, diphtheria_data, by = c("Country", "Year"))
+life_data <- left_join(life_data, hepatitisB_data, by = c("Country", "Year"))
+life_data <- left_join(life_data, measles_data, by = c("Country", "Year"))
+life_data <- left_join(life_data, polio_data, by = c("Country", "Year"))
+life_data <- left_join(life_data, Mean_BMI_data, by = c("Country", "Year"))
+life_data <- left_join(life_data, Population_data, by = c("Country", "Year"))
+life_data <- left_join(life_data, GDP_data, by = c("Country", "Year"))
+
+names(life_data)
+```
+
+This dataset offers many factors who influence life expectancy (at birth) across various countries, from 2010 to 2015. The variables include:
+
+- `Region` and `Country`: Categorical variables that provide geographic classification for comparative regional analysis.
+- `Economy_status_Developed`and `Economy_status_Developing`: Encoded variables stating if the country is Developed or Developing.
+- `Year`
+- `Infant_deaths` and `Under_five_deaths`: Quantitative measures of child mortality, reflecting the quality of pediatric healthcare and general health conditions (infant and children under five per 1000 population).
+- `Adult_mortality`: Indicates the probability of dying between the ages of 15 and 60 per 1000 individuals, a marker of adult health in the population.
+- `Alcohol`: Records per capita (15+) consumption of alcohol (in litres of pure alcohol), a factor with known health implications.
+- `HepatitisB`, `Diphtheria`, `Polio`: These variables represent immunization coverage rates among 1-year-olds for various diseases, indicating the reach and effectiveness of public health immunization programs.
+- `Measles`: Percentage coverage of the measles vaccine among 1-year-olds , crucial for preventing outbreaks.
+- `Mean_BMI`: Provides an age-standardized estimate of the population's average body mass index, relating to nutritional status and health risks.
+- `Incidents_HIV`: Reflects the rate of new HIV cases (per 1,000 uninfected population ages 15-49).
+- `Thinness_five_nine_years` and `Thinness_ten_nineteen_years`: Represent the prevalence of underweight among children and adolescents, indicating potential nutritional deficiencies.
+- `Schooling`: Measures the average number of years of education received for individuals aged 15-64, a socio-economic factor linked to health literacy. 
+- `GDP`: Stands for Gross Domestic Product per capita, an economic indicator that correlates with a country's health infrastructure and services (current US$).
+- `Population`: Population of each country for a specific year
+
+## Data pre-processing 
+ Data pre-processing
+```{r}
+nrow(life_data)
+summary(life_data)
+str(life_data) # Structure of the dataset
+```
+
+
+```{r}
+# Create a new column of the Economy Status
+life_data$Economy_status <- ifelse(life_data$Economy_status_Developed == 1, "Developed", 
+                                   ifelse(life_data$Economy_status_Developing == 1, "Developing", 
+                                          NA))
+life_data$Economy_status <- as.factor(life_data$Economy_status)
+# Change the types of Population and GDP
+life_data$Population <- as.numeric(life_data$Population)
+life_data$GDP <- as.numeric(life_data$GDP)
+# Check for missing values
+colSums(is.na(life_data))
+```
+ There are some countries which they have different names in the Global Health Observatory (GHO) data repository compare to our main file.
+```{r}
+unique(life_data$Country[is.na(life_data$Polio)])
+unique(life_data$Country[is.na(life_data$Alcohol)])
+```
+ Using the function that we created in the Functions section, we change the names of these Countries and we join again our datasets.
+```{r}
+polio_data <- change_country_names(polio_data)
+measles_data <- change_country_names(measles_data)
+adult_mort_data <- change_country_names(adult_mort_data)
+alcohol_data <- change_country_names(alcohol_data)
+diphtheria_data <- change_country_names(diphtheria_data)
+hepatitisB_data <- change_country_names(hepatitisB_data)
+Mean_BMI_data <- change_country_names(Mean_BMI_data)
+
+life_data <- dplyr::select(life_data, -Polio, -Measles, -Adult_mortality,
+                           -Alcohol, -Diphtheria, -HepatitisB,
+                           -Mean_BMI)
+life_data <- left_join(life_data, polio_data, by = c("Country", "Year"))
+life_data <- left_join(life_data, measles_data, by = c("Country", "Year"))
+life_data <- left_join(life_data, adult_mort_data, by = c("Country", "Year"))
+life_data <- left_join(life_data, alcohol_data, by = c("Country", "Year"))
+life_data <- left_join(life_data, diphtheria_data, by = c("Country", "Year"))
+life_data <- left_join(life_data, hepatitisB_data, by = c("Country", "Year"))
+life_data <- left_join(life_data, Mean_BMI_data, by = c("Country", "Year"))
+colSums(is.na(life_data))
+```
+ Check the percentages of the missing data for our variables.
+```{r}
+# Percentage of missing data for GDP
+sum(is.na(life_data$GDP))*100/nrow(life_data) 
+```
+ We have only 1.29% missing values for GDP. Therefore, all the columns with number of missing values less than 37 are fine as it is a small percentage. Let's check for HepatitisB.
+
+```{r}
+sum(is.na(life_data$HepatitisB))*100/nrow(life_data) 
+```
+ We have 19.2% of missing values for HepatitisB. We usually remove the feature if the missing values are above 10%, but we are going to keep it for now and if it is important predictor after feature selection then we will fit our model with and without HepatitisB.
+
+ Many of our data have missing values. We assume that these data follow the Missing Completely at Random (MCAR) mechanism, meaning that the missingness of data is completely random and does not depend on any observed or unobserved data. Due to the big percentage of missing data for HepatitisB we choose to fill the missing values of HepatitisB using Predictive Mean Matching from mice package. Predictive Mean Matching (PMM) is a method for imputing missing values that is widely used in statistical analysis, particularly when dealing with continuous variables. It is a non-parametric imputation technique that falls under the umbrella of multiple imputation methods. The core idea behind PMM is to impute missing values by matching them with observed (non-missing) values from similar cases.
+ For a better imputation we will use the 'pmm' in a scaled dataset. As a result our variable HepatitisB will be in a scaled form.
+```{r}
+scaled_dataset <- scale(life_data[, c("Infant_deaths", "Under_five_deaths",
+                                      "Thinness_ten_nineteen_years", "Thinness_five_nine_years", 
+                                      "Schooling", "Incidents_HIV",  
+                                      "Population", "GDP", "Polio", "Measles", "Adult_mortality",
+                                      "Alcohol", "Diphtheria", "HepatitisB", "Mean_BMI")])
+tempData <- mice(scaled_dataset, m = 4, maxit = 30, method = 'pmm', seed = 48, printFlag = FALSE)
+
+scaled_dataset <- data.frame(scaled_dataset)
+life_data$HepatitisB <- scaled_dataset$HepatitisB
+life_data$HepatitisB <- complete(tempData, 1)$HepatitisB
+
+colSums(is.na(life_data))
+# Remove unnecessary dataframes
+rm(adult_mort_data, alcohol_data, diphtheria_data, hepatitisB_data, 
+   measles_data, polio_data, Mean_BMI_data, Population_data, 
+   GDP_data, tempData)
+```
+ In addressing the small percentage of missing values within our dataset for the other variables who have missing values, we choose to impute using the median of the training set to maintain the integrity of the validation process and prevent data leakage. The median is a robust measure of central tendency that is less influenced by outliers and skewed distributions, making it particularly suitable for our dataset as we are going to see later in our Exploratory Data Analysis (EDA). By using only the training set for the imputation, we ensure that our model remains uninformed by the test set, preserving the validity of our predictive performance assessments.
+
+```{r}
+# Split the data into training and test sets based on the year
+train_set <- life_data[life_data$Year >= 2000 & life_data$Year <= 2012, ]
+test_set <- life_data[life_data$Year >= 2013 & life_data$Year <= 2015, ]
+# Let's see the proportion of train and test sets
+nrow(train_set)*100/nrow(life_data) # 81.25%
+nrow(test_set)*100/nrow(life_data) # 18.75%
+```
+ The division of our dataset into training and test sets has yielded a nearly ideal ratio of 81.25% to 18.75%, which is close to the preferred 80-20 split commonly used in model validation.
+
+```{r}
+# Filling the missing values using the Median of the train_set
+median_pop <- median(train_set$Population, na.rm = TRUE)
+train_set$Population[is.na(train_set$Population)] <- median_pop
+test_set$Population[is.na(test_set$Population)] <- median_pop
+
+median_GDP <- median(train_set$GDP, na.rm = TRUE)
+train_set$GDP[is.na(train_set$GDP)] <- median_GDP
+test_set$GDP[is.na(test_set$GDP)] <- median_GDP
+
+median_polio <- median(train_set$Polio, na.rm = TRUE)
+train_set$Polio[is.na(train_set$Polio)] <- median_polio
+test_set$Polio[is.na(test_set$Polio)] <- median_polio
+
+median_Measles <- median(train_set$Measles, na.rm = TRUE)
+train_set$Measles[is.na(train_set$Measles)] <- median_Measles
+test_set$Measles[is.na(test_set$Measles)] <- median_Measles
+
+median_adult_mort <- median(train_set$Adult_mortality, na.rm = TRUE)
+train_set$Adult_mortality[is.na(train_set$Adult_mortality)] <- median_adult_mort
+test_set$Adult_mortality[is.na(test_set$Adult_mortality)] <- median_adult_mort
+
+median_alcohol <- median(train_set$Alcohol, na.rm = TRUE)
+train_set$Alcohol[is.na(train_set$Alcohol)] <- median_alcohol
+test_set$Alcohol[is.na(test_set$Alcohol)] <- median_alcohol
+
+median_diph <- median(train_set$Diphtheria, na.rm = TRUE)
+train_set$Diphtheria[is.na(train_set$Diphtheria)] <- median_diph
+test_set$Diphtheria[is.na(test_set$Diphtheria)] <- median_diph
+
+median_bmi <- median(train_set$Mean_BMI, na.rm = TRUE)
+train_set$Mean_BMI[is.na(train_set$Mean_BMI)] <- median_bmi
+test_set$Mean_BMI[is.na(test_set$Mean_BMI)] <- median_bmi
+rm(median_pop, median_GDP, median_polio, median_Measles, median_adult_mort, median_alcohol, median_diph, median_bmi)
+
+life_data <- rbind(train_set, test_set)
+sum(is.na(life_data)) # No missing values
+```
+
+## Exploratory Data Analysis (EDA) 
+  
+Life Expectancy (at birth)
+```{r}
+# Measures of Central Tendency
+summary(life_data$Life_expectancy)
+Mode(life_data$Life_expectancy)
+# Measures of variability
+var(life_data$Life_expectancy)
+sd(life_data$Life_expectancy)
+IQR(life_data$Life_expectancy)
+MeanAD(life_data$Life_expectancy) # library DescTools
+skewness(life_data$Life_expectancy) # library moments
+kurtosis(life_data$Life_expectancy) 
+```
+
+```{r}
+# Histogram
+ggplot(life_data, aes(x = Life_expectancy)) + geom_histogram(fill = "blue") + stat_bin(bins=30)  
+ggplot(life_data, aes(x = Life_expectancy)) +
+  geom_density(fill = "skyblue", color = "blue", alpha = 0.7) 
+```
+
+ We have a left skewed distribution as we have a negative skewness and Mode>Median>Mean. We can see it clear also in the graphs.
+```{r}
+# Boxplot 
+ggplot(life_data, aes(x = Region, y = Life_expectancy)) + 
+  geom_boxplot(aes(fill = Region)) +  
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) 
+# Change type of the column Year 
+life_data$Year <- as.factor(life_data$Year)
+# Boxplot by Year
+ggplot(life_data, aes(x = Year, y = Life_expectancy)) + 
+  geom_boxplot(aes(fill = Year)) +  
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) 
+```
+```{r}
+life_data %>% group_by(Year) %>% slice(which.min(Life_expectancy))
+```
+ We can see that all the minimum by year Life expectancies come from Developing countries. Some of them are outliers. More investigation about outliers later.
+ 
+```{r}
+# Checks for Normality
+qqnorm(life_data$Life_expectancy)
+qqline(life_data$Life_expectancy, col = "red")  
+shapiro.test(life_data$Life_expectancy) 
+lillie.test(life_data$Life_expectancy)
+```
+ As expected from the histogram, the density graph and the QQ-plot we can confirm that our respone variables does not follow Normal Distribution. On both Shapiro and Lilliefors tests we reject the Null Hypothesis (p-value<0.05, with alpha=0.05 the significance level). The Null Hypothesis says that it follows a Normal Distribution.  
+ 
+ This deviation from normality is important to consider in the next steps of our statistical analyses and model selection. That's why, we will try to make the distribution of our response variable at least roughly Normal.
+ 
+```{r}
+# Try to normalize our curve
+life_data$transformed_variable <- life_data$Life_expectancy^3
+# Plotting the density of the transformed variable to check for normality
+plot(density(life_data$transformed_variable), main="Density Plot", xlab="Life expectancy")
+qqnorm(life_data$transformed_variable)
+qqline(life_data$transformed_variable, col = "red")  
+shapiro.test(life_data$transformed_variable) # as expected from histogram
+lillie.test(life_data$transformed_variable)
+life_data$transformed_variable <- NULL
+```
+
+ Still, we don't have Normality, but we can see an improvement on both density graph and QQ-plot. After trying many transformations we selected $\text{Life_expectancy}^3$.
+ 
+```{r}
+train_set$Life_expectancy <- train_set$Life_expectancy^3
+```
+ 
+ We continue with the EDA of our predictors.
+ 
+ Economy status
+```{r}
+# Graphs
+ggplot(data = life_data, mapping = aes(x = Life_expectancy, 
+                                       colour = Economy_status)) + geom_freqpoly(size = 1)
+# Same as the graphs Above
+ggplot(data = life_data, mapping = aes(x = Life_expectancy, colour = Economy_status)) + 
+  geom_freqpoly(binwidth = 100) 
+
+ggplot(data = life_data, aes(x = Economy_status, y = Life_expectancy, fill = Economy_status)) +
+  geom_boxplot(alpha=.3) +
+  theme_classic() +
+  scale_fill_manual(values = c("firebrick", "dodgerblue"))
+
+developed.life.exp <- life_data$Life_expectancy[life_data$Economy_status == "Developed"]
+developing.life.exp <- life_data$Life_expectancy[life_data$Economy_status == "Developing"]
+
+ggplot(life_data %>% filter(Economy_status == "Developed"), aes(x = Life_expectancy)) + 
+  geom_histogram(fill = "blue") + ggtitle("Life expectancy of Developed Countries")
+
+ggplot(life_data %>% filter(Economy_status == "Developing"), aes(x = Life_expectancy)) + 
+  geom_histogram(fill = "blue") +  ggtitle("Life expectancy of Developing Countries")
+```
+ 
+ From the above graphs we can see that the people from Developed countries seem to have higher Life expectancy compare to people who come from Developing countries. We can also observe that we have more people from developing countries than people from developed. One way to see the proportion is the following.
+```{r}
+ggplot(data = life_data, mapping = aes(x = Economy_status)) + geom_bar()
+# Percentage of People from Developed countries
+sum(life_data$Economy_status_Developed)/nrow(life_data)
+# Proportion developed compare to developing
+sum(life_data$Economy_status_Developed)/sum(life_data$Economy_status_Developing)
+```
+
+ The people from Developing countries are 4 times the people from Developed countries in our dataset.
+ 
+ We want to check with hypotheses tests that indeed the Life expectancy is higher for people from Developed countries compare to people from Developing countries. To be able to be sure for the results of t-test we should check the normality.
+```{r}
+mean_dif <- mean(developed.life.exp) - mean(developing.life.exp)
+mean_dif
+
+# Checks for normality
+shapiro.test(developed.life.exp)
+lillie.test(developed.life.exp)
+shapiro.test(developing.life.exp)
+lillie.test(developing.life.exp)
+# Welch's t-test
+t.test(developed.life.exp, developing.life.exp, alternative="greater")
+```
+
+ From both shapiro and lillieforse test we reject the Null Hypotheses so the variables doesn't follow Normal distribution. The t-test suggests that the mean of Life expectancy developed is greater than the mean of Life expectancy developing as we reject the Null Hypothesis for a significance level alpha=0.05 (p-value<0.05). Despite the result of the t-test we will do a permutation test because t-test assumes that the variables follow a Normal Distribution and here it is not the case. 
+
+```{r}
+set.seed(3) # for reproducibility
+all_countries <- c(developed.life.exp, developing.life.exp)
+results<-vector('list',10000)
+for(i in 1:10000){
+  x <- split(sample(all_countries), rep(1:2, c(length(developed.life.exp), length(developing.life.exp))))
+  results[[i]]<-mean(x[[1]]) - mean(x[[2]])
+}
+df <- data.frame(difs = unlist(results))
+ggplot(df, aes(x=difs)) +
+  geom_histogram(color="black", fill="green", alpha=.4) +
+  geom_vline(color="navy",lwd=1,lty=2,xintercept = mean_dif) +
+  theme_classic()+
+  ggtitle("Mean Differences from 10000 Permutations of Raw Data")
+sum(unlist(results) > mean_dif) /10000
+```
+ For the permutation test, we reject the Null Hypothesis (p-value=0<0.05) so we have that indeed the mean of Life expectancy of people from Developed countries is greater than the Life expectancy of people from Developing countries.
+```{r}
+ggplot(life_data, aes(x = Region, fill = Economy_status)) +
+  geom_bar(position = "dodge") +
+  ggtitle("Economy status by Region") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))  
+
+ggplot(life_data, aes(x = Region, fill = Economy_status)) +
+  geom_bar(position = "fill") +
+  ggtitle("Economy status by Region") +
+  labs(y="Proportion") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) 
+```
+ 
+ From the 2 graphs we see that all European Union countries are developed and all Africa, Central America and Caribbean and South America countries are developing. From the first graph we observe that we have the highest number of countries in the Africa Region.
+ 
+```{r}
+ggplot(data = life_data, mapping = aes(x = Life_expectancy, 
+                                       colour = Economy_status)) + geom_freqpoly(size = 1.2)
+ggplot(data = life_data, mapping = aes(x = GDP/1000, 
+                                       colour = Economy_status)) + geom_freqpoly(size = 1.2)
+ggplot(data = life_data, mapping = aes(x = Infant_deaths, 
+                                       colour = Economy_status)) + geom_freqpoly(size = 1.2)
+ggplot(data = life_data, mapping = aes(x = Under_five_deaths, 
+                                       colour = Economy_status)) + geom_freqpoly(size = 1.2)
+ggplot(data = life_data, mapping = aes(x = Adult_mortality, 
+                                       colour = Economy_status)) + geom_freqpoly(size = 1.2)
+ggplot(data = life_data, mapping = aes(x = Schooling, 
+                                       colour = Economy_status)) + geom_freqpoly(size = 1.2)
+```
+  
+  From the above graphs we see that many of our predictors are affected by the Economy status or vice versa.
+ 
+ 
+ Region
+```{r}
+unique(life_data$Region) 
+life_data[which(life_data$Life_expectancy==max(life_data$Life_expectancy)), 1] # Region
+life_data[which(life_data$Life_expectancy==max(life_data$Life_expectancy)), 2] # Country
+life_data[which(life_data$Life_expectancy==min(life_data$Life_expectancy)), 1] # Region
+life_data[which(life_data$Life_expectancy==min(life_data$Life_expectancy)), 2] # Country
+# Boxplot
+ggplot(data = life_data, mapping = aes(x = Region, y = Life_expectancy)) + geom_boxplot() + 
+  labs(y="Life Expectancy", x="Region") + theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+ From the boxplot we can understand that the Region is important variable because it affects a lot the Life expectancy.
+```{r}
+# Histograms
+ggplot(life_data %>% filter(Region == "European Union"), aes(x = Life_expectancy)) + 
+  geom_histogram(fill = "blue") 
+ggplot(life_data %>% filter(Region == "Africa"), aes(x = Life_expectancy)) + 
+  geom_histogram(fill = "blue") 
+```
+ 
+ Alcohol
+```{r}
+# Histogram
+ggplot(life_data, aes(x = Alcohol)) + geom_histogram(fill = "blue")  
+ggplot(life_data, aes(x = Alcohol)) +
+  geom_density(fill = "skyblue", color = "blue", alpha = 0.7) 
+# ECDF plot
+plot(ecdf(life_data$Alcohol), main="ECDF vs Theoretical CDF of Exponential Distribution")
+curve(pexp(x, rate=1/mean(life_data$Alcohol)), add=TRUE, col='red', lwd=2)
+```
+ 
+ From the graphs we see that Alcohol follows a right-skewed distribution and we would like to check if it follows an exponential distribution with $\lambda = \frac{1}{\mu_{\text{Alcohol}}}$.
+```{r}
+mean(life_data$Alcohol)
+# Perform Kolmogorov Smirnov test
+lambda <- 1 / mean(life_data$Alcohol)
+ks.test(life_data$Alcohol, "pexp", rate = lambda)
+```
+ We reject the Null hypothesis so the Alcohol does not follow Exp($\frac{1}{\mu_{\text{Alcohol}}}$).
+ 
+```{r}
+# Boxplot with Region
+ggplot(life_data, aes(x = Region, y = Alcohol, fill = Region)) +
+  geom_boxplot() + theme(axis.text.x = element_text(angle = 45, hjust = 1)) 
+```
+ 
+ The Alcohol consumptions seems to differ for each Region. European Union has the highest median.
+```{r}
+# Boxplot with Year
+ggplot(life_data, aes(x = Year, y = Alcohol, fill = Year)) +
+  geom_boxplot() + theme(axis.text.x = element_text(angle = 45, hjust = 1))  
+```
+```{r}
+# Check from which Country and how much is the outlier
+filter(life_data, Year == 2014)[which(filter(life_data, Year == 2014)$Alcohol==max(filter(life_data, Year == 2014)$Alcohol)), 2] 
+max(life_data$Alcohol[life_data$Year == 2014]) 
+```
+ 
+ Diphtheria
+ 
+```{r}
+ggplot(life_data, aes(x = Diphtheria)) +
+  geom_density(fill = "skyblue", color = "blue", alpha = 0.7)
+```
+ 
+ HepatitisB
+ 
+ A reminder that before imputing the missing values we scaled HepatitisB.
+```{r}
+ggplot(life_data, aes(x = HepatitisB)) +
+  geom_density(fill = "skyblue", color = "blue", alpha = 0.7)
+```
+
+ Mean_BMI
+```{r}
+ggplot(life_data, aes(x = Mean_BMI)) +
+  geom_density(fill = "skyblue", color = "blue", alpha = 0.7)
+```
+
+```{r}
+# Check for Normality
+qqnorm(life_data$Mean_BMI, main="...")
+qqline(life_data$Mean_BMI, col = "red")
+lillie.test(life_data$Mean_BMI)
+```
+ Population
+```{r}
+# Histogram
+ggplot(life_data, aes(x = Population)) + geom_histogram(fill = "blue")  
+ggplot(life_data, aes(x = Population)) + 
+  geom_histogram(fill = "blue", bins = 50) + 
+  scale_x_log10(labels = scales::comma) + 
+  labs(x="Population (log scale)", y = "Count", title = "Histogram of Population") +
+  theme_minimal()
+ggplot(life_data, aes(x = Population)) + 
+  geom_density(fill = "skyblue", color = "blue", alpha = 0.7) +
+  scale_x_log10(labels = scales::comma) + 
+  labs(x="Population (log scale)", y = "Count", title = "Histogram of Population") +
+  theme_minimal()
+```
+
+
+```{r}
+lillie.test(log(life_data$Population))
+```
+
+
+ GDP per capita
+```{r}
+# Histogram
+ggplot(life_data, aes(x = GDP)) + geom_histogram(fill = "blue") 
+ggplot(life_data, aes(x = GDP)) + 
+  geom_histogram(fill = "blue", bins = 50) + 
+  scale_x_log10(labels = scales::comma) + 
+  labs(x="GDP (log scale)", y = "Count", title = "Histogram of GDP") +
+  theme_minimal()
+ggplot(life_data, aes(x = GDP)) + 
+  geom_density(fill = "skyblue", color = "blue", alpha = 0.7) +
+  scale_x_log10(labels = scales::comma) + 
+  labs(x="GDP (log scale)", y = "Count", title = "Histogram of GDP") +
+  theme_minimal()
+```
+
+
+```{r}
+lillie.test(log(life_data$GDP))
+```
+  
+  So for Population and GDP per capita maybe later will be better to use log transformation for fitting our model.
+  
+
+
+  
+  Under five deaths
+```{r}
+ggplot(life_data, aes(x = Under_five_deaths)) +
+  geom_density(fill = "skyblue", color = "blue", alpha = 0.7)
+```
+```{r}
+ggplot(life_data, aes(x = Region, y = Under_five_deaths)) + 
+  geom_boxplot(aes(fill = Region)) +   
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) 
+ggplot(life_data, aes(x = Year, y = Under_five_deaths)) + 
+  geom_boxplot(aes(fill = Year)) +   
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) 
+```
+
+```{r}
+max_index <- which.max(life_data$Under_five_deaths[life_data$Region == "Central America and Caribbean"])
+life_data[life_data$Region == "Central America and Caribbean",][max_index, ]
+```
+ 
+ There was an Earthquake in Haiti in 2010 and that's why we have a big number of under five and infant deaths.
+ 
+ Infant deaths
+```{r}
+ggplot(life_data, aes(x = Infant_deaths)) +
+  geom_density(fill = "skyblue", color = "blue", alpha = 0.7)
+ggplot(life_data, aes(x = Region, y = Infant_deaths)) + 
+  geom_boxplot(aes(fill = Region)) +  
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+ 
+ Thinness 10-19 years and Thinness 5-9 years
+```{r}
+ggplot(life_data, aes(x = Thinness_ten_nineteen_years)) +
+  geom_density(fill = "skyblue", color = "blue", alpha = 0.7)
+# Boxplot 
+ggplot(life_data, aes(x = Region, y = Thinness_ten_nineteen_years)) + 
+  geom_boxplot(aes(fill = Region)) +  
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))   
+
+ggplot(life_data, aes(x = Year, y = Thinness_ten_nineteen_years)) + 
+  geom_boxplot(aes(fill = Year)) +   
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) 
+
+ggplot(life_data, aes(x = Year, y = Thinness_five_nine_years)) + 
+  geom_boxplot(aes(fill = Year)) +   
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) 
+
+life_data %>% group_by(Year) %>% slice(which.max(Thinness_ten_nineteen_years))
+```
+
+ We observe that the maximum `Thinness_ten_nineteen_years` for each year are all from India.
+
+ Schooling
+```{r}
+ggplot(life_data, aes(x = Schooling)) +
+  geom_density(fill = "skyblue", color = "blue", alpha = 0.7)
+# Boxplot 
+ggplot(life_data, aes(x = Region, y = Schooling)) + 
+  geom_boxplot(aes(fill = Region)) +  
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+ 
+ We can see the differences of Schooling by Region.
+ 
+ Incidents of HIV
+ 
+```{r}
+ggplot(life_data, aes(x = Incidents_HIV)) +
+  geom_density(fill = "skyblue", color = "blue", alpha = 0.7) 
+ggplot(life_data, aes(x = Incidents_HIV)) + 
+  geom_density(fill = "skyblue", color = "blue", alpha = 0.7) +
+  scale_x_log10(labels = scales::comma) + theme_minimal()
+ggplot(life_data, aes(x = Region, y = Incidents_HIV)) + 
+  geom_boxplot(aes(fill = Region)) +   
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) 
+```
+ 
+ Incidents HIV maybe should be log transformed before fitting our model. Another observation here is that Africa has much higher number of incidents HIV compare to other Regions.
+ 
+ Polio and Measles
+```{r}
+ggplot(life_data, aes(x = Polio)) +
+  geom_density(fill = "skyblue", color = "blue", alpha = 0.7)
+ggplot(life_data, aes(x = Measles)) +
+  geom_density(fill = "skyblue", color = "blue", alpha = 0.7)
+```
+ 
+ Adult mortality 
+```{r}
+ggplot(life_data, aes(x = Adult_mortality)) +
+  geom_density(fill = "skyblue", color = "blue", alpha = 0.7)
+ggplot(life_data, aes(x = Adult_mortality)) + 
+  geom_density(fill = "skyblue", color = "blue", alpha = 0.7) +
+  scale_x_log10(labels = scales::comma) + theme_minimal()
+# Boxplot 
+ggplot(life_data, aes(x = Region, y = Adult_mortality)) + 
+  geom_boxplot(aes(fill = Region)) +  
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) 
+```
+ 
+ Adult mortality indicates the probability of dying between the ages of 15 and 60 per 1000 individuals. Africa region has the highest median again. 
+ 
+ Correlations
+```{r}
+# Get only the numeric data
+numeric_cols <- sapply(life_data, is.numeric)
+numeric_data <- life_data[numeric_cols]
+# No need to have both developing and developed
+numeric_data$Economy_status_Developing <- NULL
+# Scatterplot matrix of data
+pairs(numeric_data[,c(1:6)]) 
+pairs(numeric_data[,c(7:12)])
+pairs(numeric_data[,c(13:17)])
+# Have always Life expectancy in the corrplots because it is our response (use corrplot library)
+# There is no meaning for columns Economy_status_Developed/Developing as they have values only 0 or 1
+corrplot(cor(numeric_data[,c(1:6,8)]), type = "upper", order = "hclust", tl.col = "black", 
+         tl.srt = 45, method = "number", number.cex = 1, addCoef.col = "black")
+corrplot(cor(numeric_data[,c(7:12)]), type = "upper", order = "hclust", tl.col = "black", 
+         tl.srt = 45, method = "number", number.cex = 1, addCoef.col = "black")
+corrplot(cor(numeric_data[,c(8, 13:17)]), type = "upper", order = "hclust", tl.col = "black", 
+         tl.srt = 45, method = "number", number.cex = 1, addCoef.col = "black")
+```
+ 
+ Some pair plots
+```{r}
+# Check the relationship between the response and the predictors
+ggplot(data = numeric_data) + geom_point(mapping = aes(x = log(Population), y = Life_expectancy), 
+                                        alpha = 1 / 5) # log Population
+ggplot(data = numeric_data) + geom_point(mapping = aes(x = Mean_BMI, y = Life_expectancy), 
+                                         alpha = 1 / 5) 
+ggplot(data = numeric_data) + geom_point(mapping = aes(x = Infant_deaths, y = Life_expectancy), 
+                                         alpha = 1 / 5)
+ggplot(data = numeric_data) + geom_point(mapping = aes(x = Diphtheria, y = Life_expectancy), 
+                                         alpha = 1 / 5)
+ggplot(data = numeric_data) + geom_point(mapping = aes(x = Adult_mortality, y = Life_expectancy), 
+                                         alpha = 1 / 5)
+
+# Check the relationship between the predictors
+ggplot(data = numeric_data) + geom_point(mapping = aes(x = Adult_mortality, y = Diphtheria), 
+                                         alpha = 1 / 5)
+ggplot(data = numeric_data) + geom_point(mapping = aes(x = Infant_deaths, y = Under_five_deaths), 
+                                         alpha = 1 / 5)
+ggplot(data = numeric_data) + geom_point(mapping = aes(x = Schooling, y = Polio), 
+                                         alpha = 1 / 5)
+ggplot(data = numeric_data) + geom_point(mapping = aes(x = Alcohol, y = Thinness_ten_nineteen_years), 
+                                         alpha = 1 / 5)
+ggplot(data = numeric_data) + geom_point(mapping = aes(x = Incidents_HIV, y = Measles), 
+                                         alpha = 1 / 5)
+ggplot(data = numeric_data) + geom_point(mapping = aes(x = HepatitisB, y = GDP))
+```
+ 
+ We hope that the response variable has high correlations with the predictors
+```{r}
+# Correlations with Life expectancy
+round(cor(numeric_data), 2)[8,]
+```
+ 
+ Infant deaths, Under five deaths and Adult mortality are highly correlated with Life expectancy (the absolut value of the correlation between them is greater than 0.8). In general all the predictors are correlated with Life expectancy except Population. We are not going to remove Population right now. We expect that after feature selection it will not be among the important features and we want to confirm that later.
+  
+  Among predictors we hope to have no correlation between them to avoid multicollinearity.
+  
+```{r}
+# Correlations with Infant deaths
+round(cor(numeric_data), 2)[1,]
+```
+ Infant deaths is highly correlated with Under five deaths and Adult mortality. Also, Diphtheria, Polio and Measles has a high correlation with Infant deaths. After feature selection, we expect only one of these predictors to be among the important ones. As we are not sure which one is better we are not going to remove any of them right now. Unfortunately, infant deaths has correlations with all the features except population.
+  
+```{r}
+# Correlations with Thinness 10-19 years
+round(cor(numeric_data), 2)[3,]
+```
+  We can see again that Thinness 10-19 years has a very high correlation with Thinness 5-9 years which is reasonable because of what they are. There is some correlation with Schooling, Mean BMI Infant and Under five deaths. Let's see after feature selection which variables we should keep. 
+ 
+```{r}
+# Create pairs plot, GGally library
+ggpairs(dplyr::select(numeric_data, Life_expectancy, Infant_deaths, Adult_mortality))
+ggpairs(dplyr::select(numeric_data, Adult_mortality, Infant_deaths, Under_five_deaths))
+```
+ 
+ 
+ Check if the variables follow the same distribution with each other (alpha = 0.05, significance level)
+```{r}
+qqplot(life_data$Adult_mortality, life_data$Infant_deaths)
+abline(0,1, col = 'red')
+ks.test(life_data$Adult_mortality, life_data$Infant_deaths) # Reject H0
+
+qqplot(life_data$Mean_BMI, life_data$Diphtheria)
+abline(0,1, col = 'red')
+ks.test(life_data$Mean_BMI, life_data$Diphtheria) # Reject H0
+
+qqplot(life_data$Thinness_ten_nineteen_years, life_data$Thinness_five_nine_years)
+abline(0,1, col = 'red')
+ks.test(life_data$Thinness_ten_nineteen_years, life_data$Thinness_five_nine_years) # Do not Reject H0
+# They follow the same distribution
+
+qqplot(life_data$Infant_deaths, life_data$Under_five_deaths)
+abline(0,1, col = 'red')
+ks.test(life_data$Infant_deaths, life_data$Under_five_deaths) # Reject H0
+```
+ We conclude from both the QQ-plot and Kolmogorov Smirnov test that Thinness 5-9 years and Thinness 10-19 years follow the same distribution (Do not reject the Null Hypothesis, p-value>0.05). 
+ 
+
+## Feature selection 
+ 
+ Let's continue with feature selection. 
+```{r}
+# Remove from the train_set because they provide the same information as Economy_status
+train_set$Economy_status_Developing <- NULL
+train_set$Economy_status_Developed <- NULL
+nrow(train_set)
+```
+
+```{r}
+lm.fit <- lm(Life_expectancy ~.-Country, data = train_set)
+summary(lm.fit)
+```
+
+ The model's F-statistic is highly significant, as evidenced by a p-value less than 2.2e-16, indicating that the model as a whole has strong predictive power and at least one of the predictors is statistically significant. Individual t-tests for the coefficients reveal that variables such as RegionAsia, RegionCentral America and Caribbean, Economy_status_Developing, Infant_deaths, and Incidents_HIV, among others, are statistically significant, with p-values well below the conventional alpha level of 0.05. This suggests that these factors have a significant impact on life expectancy. Conversely, variables like Thinness_ten_nineteen_years and Alcohol show a higher p-value, indicating that their relationship with life expectancy is not statistically significant in this model. Because of the large value of predictors we can't be sure for the results of the t-tests, but the important hypothesis test here is the F-test to make sure that we will be able later to predict Life expectancy using these variables.
+  
+  First, we use Best subset selection with complexity penalty criterion. Best subset selection can suffer from overfitting when p is large and is computationally expensive when p>30. We have p=25 and n=2327 so n is much greater than p. 
+```{r}
+n <- 25
+bss <- regsubsets(Life_expectancy ~.-Country, data = train_set, nvmax=n) 
+bss.summary <- summary(bss) 
+summary(bss)
+```
+```{r}
+par(mfrow=c(2,2))
+plot(bss.summary$rss, xlab="Number of Variables", ylab="SSres", type="l") 
+K0<-which.min(bss.summary$rss) 
+points(K0, bss.summary$rss[K0], col="red",cex=2,pch=20)
+plot(bss.summary$adjr2,xlab="Number of Variables", ylab="Adjusted RSq", type="l") 
+K1<-which.max(bss.summary$adjr2) 
+points(K1, bss.summary$adjr2[K1], col="red",cex=2,pch=20)
+plot(bss.summary$cp,xlab="Number of Variables", ylab="C_p", type="l")
+K2<-which.min(bss.summary$cp) 
+points(K2, bss.summary$cp[K2], col="red",cex=2,pch=20)
+plot(bss.summary$bic,xlab="Number of Variables", ylab="BIC", type="l") 
+K3<-which.min(bss.summary$bic) 
+points(K3, bss.summary$bic[K3], col="red",cex=2,pch=20)
+```
+
+
+```{r}
+coef(bss,12)
+```
+ Predictors for BSS with p=12: Region, Infant_deaths, Incidents_HIV, Thinness_ten_nineteen_years, Economy_status, Adult Mortality and GDP.
+ 
+```{r}
+coef(bss,8)
+```
+ Predictors for BSS with p=8: Region, Infant_deaths, Economy_status, Adult Mortality and GDP.
+```{r}
+coef(bss,5)
+```
+ Predictors for BSS with p=5: Region, Infant_deaths, Economy_status, Adult Mortality and GDP.
+ 
+```{r}
+n <- 8
+bss <- regsubsets(Life_expectancy ~.-Country, data = train_set, nvmax=n) 
+bss.summary <- summary(bss) 
+par(mfrow=c(1,3))
+plot(bss, scale = "Cp")
+title("Cp")
+plot(bss, scale = "adjr2")
+title("AdjR2")
+plot(bss, scale = "bic")
+title("BIC")
+```
+
+ Let's try also K-Folds Cross Validation (direct way).
+```{r}
+K<-10 # number of folds
+q<-25 # number of predictors 
+set.seed(2) 
+folds<-sample(1:K, nrow(train_set), replace=TRUE)
+cv.errors <- matrix(NA, K, q, dimnames = list(NULL, paste(1:q)))
+```
+  
+  
+```{r}
+for (j in 1:K) {
+  best.fit <- regsubsets(Life_expectancy ~.- Country,
+       data = train_set[folds != j, ],
+       nvmax = q)
+  for (i in 1:q) {
+    pred <- predict(best.fit, train_set[folds == j, ], id = i)
+    cv.errors[j, i] <- mean((train_set$Life_expectancy[folds == j] - pred)^2)
+   }
+}
+mean.cv.errors<-apply(cv.errors,2,mean)
+mean.cv.errors
+```
+
+```{r}
+p.cv=which.min(mean.cv.errors)# select model size with minimal mean cv error
+plot(mean.cv.errors,type='b')
+points(p.cv, mean.cv.errors[p.cv], col="red",cex=2,pch=20)
+```
+
+One Standard error rule to find the best model size
+```{r}
+SE <- sd(mean.cv.errors)/sqrt(K)
+min_mse <- min(mean.cv.errors)
+min(which(mean.cv.errors <= SE+min_mse))
+```
+```{r}
+reg.best <- regsubsets(Life_expectancy ~.- Country, data = train_set, nvmax = 25)
+coef(reg.best, 5)
+```
+ 
+ Same 5 predictors like best subset selection. So the 5 predictors will be Region, Infant deaths, Economy status, GDP and Adult Mortality. As we have seen before from the correlations, Adult mortality and infant deaths were high correlated with our response variable. Futhermore, as we have seen in our EDA Region and Economy status were affecting Life expectancy. GDP also was positevely correlated with Life expectancy.
+ 
+```{r}
+# Remove Country, Economy_status_Developed and Economy_status_Developing
+test_set$Country <- NULL
+test_set$Economy_status_Developed <- NULL
+test_set$Economy_status_Developing <- NULL
+# ytest^3 because ypred will be in that form
+y.test <- test_set$Life_expectancy^3
+```
+
+```{r}
+# Fit the linear model with the above 5 predictors
+lm_model <- lm(Life_expectancy ~ Region+Infant_deaths+Economy_status+GDP+Adult_mortality, data = train_set)
+lm_pred <- predict(lm_model, newdata = test_set)
+sqrt(mean((lm_pred - y.test)^2)) # RMSE
+mean(abs(lm_pred - y.test)) # MAE
+cor(lm_pred, y.test)^2 # R squared
+```
+ 
+### Lasso regression 
+ We will do also a Lasso regression to see which variables stay at the end. We will not perform a Ridge regression as we prefer to have a more interpretable model for our case. 
+ 
+```{r}
+x <- model.matrix(Life_expectancy ~ ., dplyr::select(train_set,-Country))[, -1]
+y <- train_set$Life_expectancy
+grid <- 10^seq(10, -2, length = 100)
+# alpha = 1 for Lasso regression
+lasso.mod <- glmnet(x, y, alpha = 1, lambda = grid)
+plot(lasso.mod)
+```
+ 
+ We can see from the coefficient plot that depending on the choice of tuning parameter, some of the coefficients will be exactly equal to zero. We now perform cross-validation and compute the associated test error.
+ 
+```{r}
+set.seed(1)
+cv.out <- cv.glmnet(x, y, alpha = 1, family='gaussian')
+plot(cv.out)
+```
+
+```{r}
+x.test <- model.matrix(Life_expectancy ~ .,test_set)[, -1]
+bestlam <- cv.out$lambda.min
+lasso.pred <- predict(lasso.mod, s = bestlam, newx = x.test)
+sqrt(mean((lasso.pred - y.test)^2)) # RMSE
+mean(abs(lasso.pred - y.test)) # MAE
+cor(y.test, lasso.pred)^2 # R squared
+```
+ 
+```{r}
+out <- glmnet(x, y, alpha = 1, lambda = grid, family='gaussian'
+              )
+lasso.coef <- predict(out, type = "coefficients", s = bestlam)[1:25, ]
+lasso.coef[lasso.coef != 0]
+```
+
+We have 21 predictors with non-zero coefficients. 
+
+## Random Forest regression
+ Let's try to see what results we get if we fit a random Forest regression model, using the 5 important features we found from best subset selection and K-Folds cross-validation.
+```{r}
+# Random Forest regression
+rf_model <- randomForest(Life_expectancy~Region+Infant_deaths+Economy_status+GDP+Adult_mortality, data = train_set)
+
+# Predict and calculate metrics
+rf_pred <- predict(rf_model, newdata = test_set)
+sqrt(mean((rf_pred - y.test)^2)) # RMSE
+mean(abs(rf_pred - y.test)) # MAE
+cor(rf_pred, y.test)^2 # R squared
+```
+## Linear Regression
+ So we have similar scores when we fitted our model with Linear Regression and Random Forest.
+ Now, we are going to try to improve the linear regression. One of the possible problems that we have already dealt with via feature selection is the  multicollinearity (Selection of the 5 most important features).
+```{r}
+summary(lm_model)
+```
+ The model's adjusted R-squared value of 0.9606, suggesting that the selected features explain a large portion of the variance in life expectancy. 
+ 
+ Let's make some checks now for some assumptions of linear regression.
+ The error terms should be independent (therefore, uncorrelated) and the variance of error terms should not be constant.
+
+```{r}
+par(mfrow=c(2,2))
+plot(lm_model)
+residuals <- lm_model$residuals
+train_set[c(226, 1418, 745), ]
+train_set[c(226, 1842,2318), ]
+```
+
+ 
+The diagnostic plots from the regression analysis indicate potential issues in the model. The Residuals vs Fitted and Scale-Location plots suggest non-linearity and heteroscedasticity, implying that the assumptions of linearity and equal variance are not fully met. The Q-Q plot shows some deviations from normality in the tails. Additionally, the Residuals vs Leverage plot identifies several influential points that might be overly impacting the model's predictions, as evidenced by outliers lying beyond Cook's distance lines.
+
+Cook's Distance: The dashed Cook's distance lines suggest cutoffs for what might be considered an influential point.
+
+ 
+```{r}
+plot(predict(lm_model), rstudent(lm_model))
+studentized_residuals <- rstudent(lm_model)
+# Find the indices of the observations where the absolute value of studentized residuals is greater than 3
+extreme_residuals <- which(abs(studentized_residuals) > 2)
+# Get the row names of those extreme residuals
+extreme_residuals <- row.names(df)[extreme_residuals]
+extreme_residuals_row_numbers <- as.numeric(extreme_residuals)
+extreme_residuals_points <- data.frame(Row = extreme_residuals_row_numbers, StudentizedResiduals = studentized_residuals[extreme_residuals])
+
+extreme_residuals <- which(abs(studentized_residuals) > 3)
+# Get the row names of those extreme residuals
+extreme_residuals <- row.names(df)[extreme_residuals]
+extreme_residuals_row_numbers <- as.numeric(extreme_residuals)
+extreme_residuals_points2 <- data.frame(Row = extreme_residuals_row_numbers, StudentizedResiduals = studentized_residuals[extreme_residuals])
+```
+
+```{r}
+leverage_values <- hatvalues(lm_model)
+
+top_indices <- which(leverage_values > 0.020)
+# Get the row names of the top high leverage points
+top_indices <- row.names(df)[top_indices]
+top_row_numbers <- as.numeric(top_indices)
+top_leverage_values <- leverage_values[top_indices]
+top_rows_and_leverage <- data.frame(Row = top_row_numbers, Leverage = top_leverage_values)
+```
+
+```{r}
+# Train set 1 has removed high leverage points and removed outliers where studentized residuals >2
+train_set1 <- train_set[-top_rows_and_leverage$Row, ]
+train_set1 <- train_set1[-extreme_residuals_points$Row,]
+
+# Train set 2 has removed high leverage points and removed outliers where studentized residuals >3
+train_set2 <- train_set[-top_rows_and_leverage$Row, ]
+train_set2 <- train_set2[-extreme_residuals_points2$Row,]
+```
+ 
+  Another important assumption of linear regression is the linearity of the response-predictors relationship. As we have seen previously on our EDA we may improve our model if we log transform the predictors of Adult mortality and GDP. Below we can see the graphs of our response with each of these predictors (with log transformation).
+ 
+```{r}
+# Check the relationship between the response and the predictors
+ggplot(data = train_set) + geom_point(mapping = aes(x = log(Adult_mortality), y = Life_expectancy), 
+                                        alpha = 1 / 5) 
+ggplot(data = train_set) + geom_point(mapping = aes(x = log(GDP), y = Life_expectancy), 
+                                        alpha = 1 / 5) 
+```
+  
+  Indeed we see that we have an improvement of the linearity of these 2 relationships. So we hope to get better results if we fit our model taking that into account.
+  
+```{r}
+# Fit the linear model with log(Adult mortality) and log(GDP)
+lm_model <- lm(Life_expectancy ~ Region+Infant_deaths+Economy_status +log(GDP)+log(Adult_mortality), data = train_set)
+lm_pred <- predict(lm_model, newdata = test_set)
+sqrt(mean((lm_pred - y.test)^2)) # RMSE
+mean(abs(lm_pred - y.test)) # MAE
+cor(lm_pred, y.test)^2 # R squared
+```
+ We see an improvement on the metrics calculated on unseen data! So for now that's the best model we have. 
+ Next, we check the optimal complexity of Infant deaths for our model.
+```{r}
+set.seed(17)  # for reproducibility
+# Prepare a data frame to store CV errors for different polynomial degrees
+cv.error <- data.frame(degree = integer(), CV_MSE = numeric())
+
+# Loop through degrees 1 to 10 for the polynomial
+for (degree in 1:10) {
+  # Fit model with a polynomial term for Infant_deaths
+  # Perform linear regression using the glm() function rather than the lm() function because the former can 
+  # be used together with cv.glm()
+  glm.fit <- glm(Life_expectancy ~ Region + poly(Infant_deaths, degree) + 
+                  Economy_status + log(GDP) + log(Adult_mortality), 
+                data = train_set)
+  # Perform 10-fold CV
+  cv.error[degree, "degree"] <- degree
+  # cv.glm Boot library
+  cv.error[degree, "CV_MSE"] <- cv.glm(train_set, glm.fit, K = 10)$delta[1]
+}
+# View the cross-validation errors
+print(cv.error)
+# Plot the CV errors
+ggplot(cv.error, aes(x = degree, y = CV_MSE)) + 
+  geom_line() + geom_point() +
+  labs(x = "Degree of Polynomial for Infant Deaths", y = "Cross-Validated MSE") +
+  ggtitle("10-fold CV MSE for Different Polynomial Degrees of Infant Deaths")
+```
+
+```{r}
+lm.fit <- lm(Life_expectancy ~ Region + Infant_deaths+Economy_status + 
+                 log(GDP)+log(Adult_mortality), data = train_set)
+lm.fit2 <- lm(Life_expectancy ~ Region + poly(Infant_deaths, 2)+Economy_status + 
+                 log(GDP)+log(Adult_mortality), data = train_set)
+anova(lm.fit, lm.fit2)
+```
+
+The anova() function performs a hypothesis test comparing the two models. The null hypothesis is that the two models fit the data equally well, and the alternative hypothesis is that the full model is superior. Here the F-statistic is 286.9 and the associated p-value is virtually zero. This provides very clear evidence that the model containing the predictors Infant_deaths and $Infant\_deaths^2$ is far superior to the model that only contains the predictor Infant_deaths. 
+
+```{r}
+lm.fit3 <- lm(Life_expectancy ~ Region + poly(Infant_deaths, 3)+Economy_status + 
+                 log(GDP)+log(Adult_mortality), data = train_set)
+anova(lm.fit2, lm.fit3)
+```
+
+ Here the F-statistic is 1.6632 and the associated p-value is greater than 0.05 ($\alpha=0.05$ significance level). We do not reject the Null Hypothesis and this means that the two models fit the data equally well. Thus, the best model is with $Infant\_deaths^2$. 
+ 
+```{r}
+lm_model <- lm(Life_expectancy ~ Region + poly(Infant_deaths, 2)+Economy_status + 
+                 log(GDP)+log(Adult_mortality), data = train_set)
+lm_pred <- predict(lm_model, newdata = test_set)
+sqrt(mean((lm_pred - y.test)^2)) # RMSE
+mean(abs(lm_pred - y.test)) # MAE
+cor(lm_pred, y.test)^2 # R squared
+```
+
+```{r}
+par(mfrow=c(2,2))
+plot(lm_model)
+```
+ 
+ The diagnostic plots indicate moderate improvements in the regression model's assumptions. The Residuals vs Fitted and Scale-Location plots suggest a slight reduction in non-linearity and heteroscedasticity, indicating better compliance with the assumptions of equal variance and linearity. The Q-Q plot shows a better alignment of residuals with the normal distribution, although deviations at the tails persist, suggesting the presence of outliers.
+
+The bootstrap approach can be used to assess the variability of the coefficient estimates and predictions from a statistical learning method.
+
+```{r}
+boot.fn <- function(data, index){
+  coef(lm(Life_expectancy ~ Region + poly(Infant_deaths, 2)+Economy_status + 
+                 log(GDP)+log(Adult_mortality), data = data, subset = index))
+}
+set.seed(1)
+boot(train_set, boot.fn, 1000)
+summary(lm(Life_expectancy ~ Region + poly(Infant_deaths, 2)+Economy_status+ 
+                 log(GDP)+log(Adult_mortality), data = train_set))$coef
+```
+
+Comparing the bootstrap results with the original regression output, we see that for most coefficients, the bootstrap standard errors are reasonably close to the original standard errors, which suggests that the model estimates are relatively stable. However, the coefficients have some bias according to the bootstrap results, which could warrant further investigation. 
+
+ The relationship between a country's wealth (GDP) and its adult mortality rates could be non-linear or might change at different levels of GDP. We will include an interaction term between them to check if we will get better results.
+```{r}
+lm_model <- lm(Life_expectancy ~ Region + poly(Infant_deaths, 2)+Economy_status  
+                 +log(GDP)*log(Adult_mortality), data = train_set)
+lm_pred <- predict(lm_model, newdata = test_set)
+sqrt(mean((lm_pred - y.test)^2)) # RMSE
+mean(abs(lm_pred - y.test)) # MAE
+cor(lm_pred, y.test)^2 # R squared
+```
+
+ With including an interaction term the metrics on unseen data are slightly worse. Thus, our best model is without an interaction term.
+ Now we want to train our model with the two sets that we created above where we removed outliers and high leverage points.
+
+
+Note: After removing the outliers and the high leverages all entries of North America had been removed. Because of that there was an error because the model couldn't train for North America, but the test set had values of North America. We replace the values from North America to South America in order to work. So the following two models are not comparable with the previous models.
+```{r}
+train_set1$Region <-as.factor(train_set1$Region)
+
+test_set$Region <- as.factor(ifelse(test_set$Region == "North America", "South America", as.character(test_set$Region)))
+
+# Train set 1 has removed high leverage points and removed outliers where studentized residuals >2
+lm_model1 <- lm(Life_expectancy ~ Region + poly(Infant_deaths, 2)+Economy_status +
+                log(GDP)+log(Adult_mortality), data = train_set1)
+lm_pred <- predict(lm_model1, newdata = test_set)
+sqrt(mean((lm_pred - y.test)^2)) # RMSE
+mean(abs(lm_pred - y.test)) # MAE
+cor(lm_pred, y.test)^2 # R squared
+```
+
+
+```{r}
+# Train set 2 has removed high leverage points and removed outliers where studentized residuals >3
+lm_model2 <- lm(Life_expectancy ~ Region + poly(Infant_deaths, 2)+Economy_status +
+                log(GDP)+log(Adult_mortality), data = train_set2)
+lm_pred <- predict(lm_model2, newdata = test_set)
+sqrt(mean((lm_pred - y.test)^2)) # RMSE
+mean(abs(lm_pred - y.test)) # MAE
+cor(lm_pred, y.test)^2 # R squared
+```
+Cyprus Life expectancy 2000 - 2015
+```{r}
+life_data[life_data$Country == 'Cyprus', ]$Life_expectancy
+```
+
+```{r}
+best_model <- lm(Life_expectancy ~ Region + poly(Infant_deaths, 2)+Economy_status + 
+                 log(GDP)+log(Adult_mortality), data = train_set)
+```
+
+The equation of the best model is 
+$\hat{Life\_expectancy}^3 = \hat{\beta}_0 + \hat{\beta}_1 \cdot \text{Asia} + \hat{\beta}_2 \cdot \text{Central America and Caribbean} + \hat{\beta}_3 \cdot \text{European Union} + \hat{\beta}_4 \cdot \text{Middle East} \\+ \hat{\beta}_5 \cdot \text{North America} + \hat{\beta}_6 \cdot \text{Oceania} + \hat{\beta}_7 \cdot \text{Rest of Europe} + \hat{\beta}_8 \cdot \text{South America} + \hat{\beta}_9 \cdot \text{Infant_deaths} \\ + \hat{\beta}_{10} \cdot \text{Infant_deaths}^2 + \hat{\beta}_{11} \cdot \text{Economy_status Developing} + \hat{\beta}_{12} \cdot \log(\text{GDP}) + \hat{\beta}_{13} \cdot \log(\text{Adult_mortality})$
+
+Please note that in the regression model for forecasting life expectancy within the Africa Region, all regional predictors are set to 0. Same for predicting Life Excpectancy for Developed countries the Economy_statusDeveloping is set to 0.
+
+
+ The coefficients of the best model.
+```{r}
+coef(best_model)
+```
+
+
+In 2020, adult mortality rate for Cyprus was 9.18 deaths per 100 population (COVID 19). Below we can see the prediction interval and the prediction of Life Expectancy for the following values of predictors:
+`Adult_mortality` = 91.8, `Country` = Cyprus, `Region` = European Union, `GDP` = 32000, `Infant_deaths` = 3.2 and `Economy_status` = Developed country.
+```{r}
+newdata <- data.frame(Region = 'European Union', Country = 'Cyprus', Infant_deaths = 2.3, Economy_status = 'Developed', GDP = 24600, Adult_mortality = 55)
+predictions <- predict(best_model, newdata, interval="prediction", level =0.95) 
+
+fit <- predictions[, "fit"]
+lwr <- predictions[, "lwr"]
+upr <- predictions[, "upr"]
+
+# To take the cube root to get back to the original Life_expectancy scale
+fit_original <- fit^(1/3)
+lwr_original <- lwr^(1/3)
+upr_original <- upr^(1/3)
+
+# Print the original life expectancy and its prediction interval
+data.frame(Life_expectancy = fit_original, Lower_Bound = lwr_original, Upper_Bound = upr_original)
+```
+
+
+ The 95% prediction interval is approximately (76.4, 80.2)
+
+
+  
