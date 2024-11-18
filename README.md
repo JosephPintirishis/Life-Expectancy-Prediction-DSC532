@@ -20,7 +20,7 @@ This project was developed as part of the DSC 532 – Statistical Learning cours
 - **`Life_data_final.rmd`**: The R Markdown file containing the code for data processing, analysis, and model development.
 - **`Life_data_final.html`**: The HTML output generated from the R Markdown file, providing a rendered report of the entire analysis.
 - **`Life Expectancy.pdf`**: The presentation file summarizing the project’s objectives, methodology, results, and conclusions.
-- **`DSC532_REG.pdf`**: The final report for the DSC 532 – Statistical Learning course.
+- **`DSC532_REG.pdf`**: The final report.
 - **`LICENSE`**: The MIT License file, outlining the terms under which the project can be used, modified, and distributed.
 
 ## Data Sources
