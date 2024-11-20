@@ -54,7 +54,7 @@ This project was developed as part of the DSC 532 – Statistical Learning cours
 - `randomForest`
 - `boot`
 
-## Installation
+## Installation_
 
 To install the required R packages, you can run:
 
