@@ -66,4 +66,8 @@ new.packages <- list.of.packages[!(list.of.packages %in% installed.packages()[, 
 if (length(new.packages)) install.packages(new.packages)
 # Load packages
 invisible(lapply(list.of.packages, library, character.only = TRUE))
+```
+
+If you use this code in your projects or publish something based on it, we would love to hear about it! Feel free to reach out or share your work.
+
 
